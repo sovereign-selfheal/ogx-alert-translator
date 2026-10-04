@@ -1,0 +1,21 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# Quay builds and pushes this image on git tags (build trigger). This workflow only
+# checks that the image builds; it pushes nothing.
+jobs:
+  build-and-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Build the image (no push)
+        run: podman build -t localhost/ogx-alert-translator:ci .

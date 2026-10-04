@@ -1,0 +1,76 @@
+---
+description: Python/FastAPI stack standards for ogx-alert-translator
+globs: "**/*.{py,yml,yaml,txt,sh}"
+alwaysApply: true
+---
+
+# ogx-alert-translator stack standards
+
+## Language and style
+
+- **Python 3.11** only (matches `Containerfile` base image).
+- Start every module with `from __future__ import annotations`.
+- Type hints on all public function signatures and return types.
+- Use `snake_case` for modules, functions, and variables; `UPPER_SNAKE` for module-level constants.
+- Keep modules small and single-purpose under flat `app/` (no `src/` layout).
+
+## Libraries (required / preferred)
+
+| Concern | Library |
+|---|---|
+| HTTP API | **FastAPI** (`APIRouter` optional; keep `main.py` thin) |
+| ASGI server | **uvicorn** with `[standard]` in the image |
+| HTTP client | **httpx** (async); same family as `triage-agent` |
+| Settings | **pydantic-settings** (`BaseSettings`, env prefix optional) |
+| Validation | **pydantic v2** models (`BaseModel`, `Field`) |
+| Tests | **pytest**, **pytest-asyncio**, **httpx** `ASGITransport` / `AsyncClient` / `MockTransport` |
+
+Do **not** add: SQLAlchemy, Celery, Django, Flask, `requests` (sync), Gradio, or **`ogx_client`**
+(this service never calls OGX directly — see Application patterns below).
+
+## Application patterns
+
+- Webhook: validate body with Pydantic, return **202** for accepted firing alerts.
+- Forwarding call: plain `httpx` POST to `{TRIAGE_AGENT_URL}/trigger` with `{"input": "<text>"}`,
+  run in a background task; log outcome and errors. Use a **short** timeout
+  (`request_timeout_seconds`) — you are only waiting for triage-agent's 202 ack, not the full
+  agent run.
+- **Never define a system prompt, MCP tool list, model name, or knowledge file in this repo.**
+  That is `triage-agent/agent.py`'s sole responsibility. If you find yourself adding one of
+  those here, stop — call `/trigger` instead.
+- Configuration: **environment variables only** in runtime image; no `.env` committed or baked in.
+- Logging: stdlib `logging` with `LOG_LEVEL` env; structured key=value in log messages where useful.
+- No global mutable state beyond app lifespan (e.g. shared `httpx.AsyncClient` if needed).
+
+## File naming
+
+- `app/alertmanager.py` — Alertmanager payload models (not `alert_manager.py`).
+- `app/prompt_builder.py` — Alert payload → plain input text (no instructions/tools here).
+- `app/agent_client.py` — Forwards to triage-agent's `/trigger`. `app/config.py`.
+- Tests: `tests/test_<module>.py`, fixtures in `tests/conftest.py`.
+- Container build file: **`Containerfile`** (not `Dockerfile`), matching sibling repos.
+
+## Container image
+
+- Base: `python:3.11-slim`.
+- Install `curl` only if startup health checks need it (optional for this service).
+- `pip install -r requirements.txt` before copying app code (layer cache).
+- User **1001**, group **0**, `chmod -R g=u`, `runAsNonRoot` compatible.
+- `EXPOSE 8080`; `PYTHONUNBUFFERED=1`.
+- Entrypoint: `uvicorn app.main:app --host 0.0.0.0 --port 8080` (or `start.sh` if added).
+
+## Testing
+
+- Mark async tests with `@pytest.mark.asyncio`.
+- Use sample Alertmanager JSON fixtures in `tests/conftest.py`.
+- Mock OGX with httpx mock transport or patch `ogx_sender.send_to_ogx`; do not call real cluster endpoints in unit tests.
+- Run: `pytest -q` from repository root.
+
+## Comments and docs
+
+- English, clear B2/C1 prose in README and AGENTS.md.
+- Comments only for non-obvious alert/OGX integration behavior.
+
+## GitHub Actions
+
+- Workflow name `ci`; `podman build` smoke test on PR and `main`; **no push** in CI (Quay on tags).
