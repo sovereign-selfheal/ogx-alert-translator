@@ -2,7 +2,10 @@
 
 Stateless **Alertmanager webhook bridge** for the Sovereign Self-Healing demo. It accepts
 Prometheus Alertmanager v4 JSON on `POST /webhook`, turns firing alerts into a plain-text
-prompt, and forwards it to **triage-agent** (`POST /trigger` with `{"input": "..."}`).
+prompt, and forwards it to **triage-agent** (`POST /trigger` with `{"input": "...", "namespaces": [...]}`).
+`namespaces` holds the `namespace` labels of the alerts (omitted when there are none): triage-agent
+sends them to the router, which keeps the requests about a namespace labelled
+`sovereign-selfheal.io/data-class=restricted` on the local model (router v0.11.0, namespace policy).
 
 This service does **not** run OGX or define the troubleshooting agent. System prompt, MCP
 tools, knowledge base, and model selection live only in
@@ -12,7 +15,7 @@ tools, knowledge base, and model selection live only in
 
 - `app/main.py` — FastAPI: `/webhook`, `/healthz`, `/readyz`
 - `app/alertmanager.py` — Alertmanager payload models
-- `app/prompt_builder.py` — alert JSON → input text
+- `app/prompt_builder.py` — alert JSON → input text, and the `namespace` labels of the alerts
 - `app/agent_client.py` — async POST to triage-agent `/trigger`
 - `app/config.py` — settings from environment
 

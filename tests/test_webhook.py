@@ -31,6 +31,7 @@ def test_webhook_accepts_firing(client: TestClient, firing_payload: dict) -> Non
     mock_forward.assert_called_once()
     prompt = mock_forward.call_args[0][0]
     assert "HighErrorRate" in prompt
+    assert mock_forward.call_args[0][2] == ["agentic-triage"]
 
 
 def test_webhook_ignores_resolved(client: TestClient, resolved_payload: dict) -> None:

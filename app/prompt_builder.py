@@ -26,6 +26,28 @@ def _format_alert(alert: Alert, index: int) -> str:
     return "\n".join(lines)
 
 
+def _selected_alerts(payload: AlertmanagerPayload) -> list[Alert]:
+    """The alerts that go into the prompt: the firing ones, or all when none is firing."""
+    firing = [a for a in payload.alerts if a.status == "firing"]
+    return firing if firing else payload.alerts
+
+
+def alert_namespaces(payload: AlertmanagerPayload) -> list[str]:
+    """The `namespace` labels of the alerts in the prompt, in order and without duplicates.
+
+    triage-agent sends them to the router (body field `selfheal_namespaces`): a request about
+    a namespace labelled `sovereign-selfheal.io/data-class=restricted` stays on the local model.
+    """
+    names: list[str] = []
+    candidates = [payload.commonLabels.get("namespace", ""), payload.groupLabels.get("namespace", "")]
+    candidates += [a.labels.get("namespace", "") for a in _selected_alerts(payload)]
+    for name in candidates:
+        name = name.strip()
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
 def build_prompt(payload: AlertmanagerPayload) -> str:
     """Turn an Alertmanager webhook payload into the OGX agent user message."""
     parts = [ALERT_PREFIX.strip(), ""]
@@ -39,9 +61,7 @@ def build_prompt(payload: AlertmanagerPayload) -> str:
         for key, value in sorted(payload.commonAnnotations.items()):
             parts.append(f"- `{key}`: {value}")
         parts.append("")
-    firing = [a for a in payload.alerts if a.status == "firing"]
-    alerts = firing if firing else payload.alerts
-    for i, alert in enumerate(alerts):
+    for i, alert in enumerate(_selected_alerts(payload)):
         parts.append(_format_alert(alert, i))
         parts.append("")
     parts.append(

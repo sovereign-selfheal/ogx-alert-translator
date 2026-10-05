@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from app.agent_client import forward_to_triage_agent
 from app.alertmanager import AlertmanagerPayload
 from app.config import Settings, get_settings
-from app.prompt_builder import build_prompt
+from app.prompt_builder import alert_namespaces, build_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +64,14 @@ async def webhook(
             content={"status": "ignored", "reason": "no_firing_alerts"},
         )
     prompt = build_prompt(payload)
-    background_tasks.add_task(forward_to_triage_agent, prompt, settings)
+    namespaces = alert_namespaces(payload)
+    background_tasks.add_task(forward_to_triage_agent, prompt, settings, namespaces)
     logger.info(
-        "Accepted alert webhook receiver=%s alerts=%d groupKey=%s",
+        "Accepted alert webhook receiver=%s alerts=%d groupKey=%s namespaces=%s",
         payload.receiver,
         len(payload.alerts),
         payload.groupKey,
+        namespaces,
     )
     return JSONResponse(
         status_code=202,
