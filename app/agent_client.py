@@ -9,7 +9,7 @@ from app.config import Settings
 logger = logging.getLogger(__name__)
 
 
-async def forward_to_triage_agent(prompt: str, settings: Settings) -> None:
+async def forward_to_triage_agent(prompt: str, settings: Settings, namespace: str) -> None:
     """Fire-and-forget: hand the alert-derived prompt to triage-agent's `/trigger` endpoint.
 
     triage-agent (its `agent.py`) owns the system prompt, MCP tool wiring, knowledge base
@@ -17,10 +17,14 @@ async def forward_to_triage_agent(prompt: str, settings: Settings) -> None:
     OGX directly. It only builds the user-facing input text from the Alertmanager payload
     (see `prompt_builder.py`) and forwards it here.
 
+    One agent runs per monitored-application namespace (same Service name everywhere): the
+    `namespace` argument is the alert's own namespace (`prompt_builder.target_namespace`),
+    so this call always reaches that namespace's own agent, never a single fixed instance.
+
     triage-agent returns 202 immediately and runs the agent to completion in its own
     background task, so this call only needs a short timeout to wait for that ack.
     """
-    url = f"{settings.triage_agent_url.rstrip('/')}/trigger"
+    url = f"http://{settings.triage_agent_service}.{namespace}.svc:{settings.triage_agent_port}/trigger"
     timeout = httpx.Timeout(
         connect=settings.request_timeout_seconds,
         read=settings.request_timeout_seconds,

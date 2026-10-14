@@ -6,8 +6,12 @@ Guidance for AI coding agents and humans working in this repo. Read it fully bef
 
 This repository builds **ogx-alert-translator**: a small, stateless HTTP service that receives
 **Prometheus Alertmanager** webhook payloads (POST JSON, v4 format), turns firing alerts into a
-structured natural-language prompt, and forwards it to the **triage-agent** workload already
-deployed in the same OpenShift cluster.
+structured natural-language prompt, and forwards it to the **triage-agent** workload that runs
+in the alert's own namespace. One agent runs per monitored-application namespace (`payments`,
+`rh-reserve`, `reverse-proxy-app`, ...), each with the same Service name: this translator is the
+single, shared bridge for all of them. It picks the target namespace from the alert's own
+`namespace` label (see `app/prompt_builder.py::target_namespace`), never from a fixed,
+hardcoded namespace.
 
 The translator does **not** run an OGX sidecar, does **not** call OGX directly, and does **not**
 define a system prompt, MCP tool list, or model selection. There is exactly **one** agent
@@ -53,9 +57,11 @@ under `app/`, image runs `uvicorn`).
 2. **Firing alerts only.** Ignore or short-circuit payloads with `status: resolved` unless product
    requirements explicitly ask to handle resolutions.
 3. **No database.** No SQLite, Redis, or queues in this service. Logs are the audit trail.
-4. **Single outbound dependency: triage-agent's `/trigger` endpoint.** `POST {TRIAGE_AGENT_URL}/trigger`
-   with body `{"input": "<text>"}`. This service never talks to OGX, MCP servers, or the router
-   directly — those are entirely triage-agent's concern.
+4. **Single outbound dependency: an agent's `/trigger` endpoint, in the alert's own namespace.**
+   `POST http://{TRIAGE_AGENT_SERVICE}.{namespace}.svc:{TRIAGE_AGENT_PORT}/trigger` with body
+   `{"input": "<text>"}`, where `namespace` comes from the alert group
+   (`prompt_builder.target_namespace`), never from a single fixed URL. This service never talks
+   to OGX, MCP servers, or the router directly — those are entirely triage-agent's concern.
 5. **Never redefine the agent.** Do **not** add a system prompt, MCP tool list, model name, or
    knowledge file in this repo. That logic lives exactly once, in `triage-agent/agent.py`. This
    repo's only responsibility is turning an Alertmanager payload into a readable `input` string
@@ -74,7 +80,7 @@ architecture change agreed with `gitops` and platform owners.
 |---|---|
 | **Identity** | Container runs as non-root UID **1001** (OpenShift-compatible), same as `triage-agent`. |
 | **Network ingress** | Cluster-internal only: Alertmanager (or KEDA HTTP interceptor) POSTs to the Service. No public Route in gitops for this component. |
-| **Network egress** | Only one cluster-internal URL: `TRIAGE_AGENT_URL` — not configured as an arbitrary URL from the webhook body. Everything triage-agent reaches (router, MCP servers, OGX) is entirely out of this service's control plane. |
+| **Network egress** | Only one target shape, built from `TRIAGE_AGENT_SERVICE`/`TRIAGE_AGENT_PORT` and the alert's own `namespace` label — never an arbitrary URL from the webhook body, and the namespace is read, not written: a group without a `namespace` label is ignored, not forwarded to a guessed namespace. Everything triage-agent reaches (router, MCP servers, OGX) is entirely out of this service's control plane. |
 | **Secrets** | No API keys or tokens in git or in this service. It calls triage-agent's plain HTTP `/trigger` route — no OGX credential, no router credential here. |
 | **Webhook trust** | Treat webhook body as untrusted input: validate with Pydantic, bound sizes, reject malformed JSON. Optional shared secret / mTLS is a gitops/Ansible concern, not stored in repo. |
 | **PII / alert labels** | Log alert names and namespaces; avoid logging full annotation blobs at DEBUG without need. |
@@ -95,10 +101,13 @@ architecture change agreed with `gitops` and platform owners.
 
 ## 7. Contract with `triage-agent`
 
-1. **One endpoint.** `POST http://triage-agent.<triage-ns>.svc:7860/trigger` with JSON
-   `{"input": "<text>"}`. triage-agent's existing Service port (`7860`, already used by the Gradio
-   UI) serves this route too — `triage-agent/app.py` mounts Gradio inside a FastAPI app that also
-   exposes `/trigger`. No new Service port is needed.
+1. **One endpoint per monitored-application namespace.** `POST
+   http://<TRIAGE_AGENT_SERVICE>.<alert namespace>.svc:<TRIAGE_AGENT_PORT>/trigger` with JSON
+   `{"input": "<text>"}`, where `<alert namespace>` is the namespace of the alert being
+   forwarded (not a single fixed namespace: every monitored-application namespace has its own
+   agent, same Service name). triage-agent's existing Service port (`7860`, already used by the
+   Gradio UI) serves this route too — `triage-agent/app.py` mounts Gradio inside a FastAPI app
+   that also exposes `/trigger`. No new Service port is needed.
 2. **Response contract.** `202 {"status": "accepted"}` immediately; the actual agent run (system
    prompt, MCP tools, model, knowledge — all defined in `triage-agent/agent.py`) happens
    server-side in triage-agent's own background task.

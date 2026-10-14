@@ -22,16 +22,26 @@ See [AGENTS.md](AGENTS.md) for architecture and contracts with `gitops` and `tri
 
 | Variable | Default | Description |
 |---|---|---|
-| `TRIAGE_AGENT_URL` | `http://triage-agent.agentic-triage.svc:7860` | triage-agent base URL (no path) |
+| `TRIAGE_AGENT_SERVICE` | `triage-agent` | Name of the triage-agent Service (same name in every monitored-application namespace) |
+| `TRIAGE_AGENT_PORT` | `7860` | Port of the triage-agent Service |
 | `REQUEST_TIMEOUT_SECONDS` | `10` | Timeout waiting for triage-agent's 202 ack only |
 | `LOG_LEVEL` | `INFO` | Logging level |
+
+One agent runs per monitored-application namespace (`payments`, `rh-reserve`,
+`reverse-proxy-app`, ...), all using the same Service name. This service does not call a
+single fixed URL: for each alert group it reads the `namespace` label (`groupLabels`,
+falling back to `commonLabels`, then the first alert that has one) and calls
+`http://{TRIAGE_AGENT_SERVICE}.{namespace}.svc:{TRIAGE_AGENT_PORT}/trigger`. A group with no
+`namespace` label anywhere is logged and ignored (`202 {"status": "ignored", "reason":
+"no_namespace_label"}`) — it is never sent to a guessed or default namespace.
 
 ## Local development
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements-dev.txt
-export TRIAGE_AGENT_URL=http://localhost:7860
+export TRIAGE_AGENT_SERVICE=triage-agent
+export TRIAGE_AGENT_PORT=7860
 uvicorn app.main:app --reload --port 8080
 ```
 
