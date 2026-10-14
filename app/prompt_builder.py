@@ -26,6 +26,25 @@ def _format_alert(alert: Alert, index: int) -> str:
     return "\n".join(lines)
 
 
+def target_namespace(payload: AlertmanagerPayload) -> str | None:
+    """Pick the namespace whose own agent should receive this alert group.
+
+    Each monitored-application namespace routes its alerts through its own
+    `AlertmanagerConfig`, all pointing at this one translator (see `gitops` repo,
+    `components/ogx-alert-translator`), so every alert in a group shares the same
+    `namespace` label in practice. Prefer the group-level labels (cheapest, and set by
+    Alertmanager's own grouping) and fall back to the first alert that carries one.
+    """
+    namespace = payload.groupLabels.get("namespace") or payload.commonLabels.get("namespace")
+    if namespace:
+        return namespace
+    for alert in payload.alerts:
+        namespace = alert.labels.get("namespace")
+        if namespace:
+            return namespace
+    return None
+
+
 def build_prompt(payload: AlertmanagerPayload) -> str:
     """Turn an Alertmanager webhook payload into the OGX agent user message."""
     parts = [ALERT_PREFIX.strip(), ""]

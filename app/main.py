@@ -10,7 +10,7 @@ from fastapi.responses import JSONResponse
 from app.agent_client import forward_to_triage_agent
 from app.alertmanager import AlertmanagerPayload
 from app.config import Settings, get_settings
-from app.prompt_builder import build_prompt
+from app.prompt_builder import build_prompt, target_namespace
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +27,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     _configure_logging(settings.log_level)
     app.state.settings = settings
-    logger.info("ogx-alert-translator started triage_agent_url=%s", settings.triage_agent_url)
+    logger.info(
+        "ogx-alert-translator started triage_agent_service=%s triage_agent_port=%s",
+        settings.triage_agent_service,
+        settings.triage_agent_port,
+    )
     yield
 
 
@@ -63,13 +67,26 @@ async def webhook(
             status_code=202,
             content={"status": "ignored", "reason": "no_firing_alerts"},
         )
+    namespace = target_namespace(payload)
+    if namespace is None:
+        logger.error(
+            "Ignoring webhook: no `namespace` label on groupLabels/commonLabels/alerts, "
+            "receiver=%s groupKey=%s",
+            payload.receiver,
+            payload.groupKey,
+        )
+        return JSONResponse(
+            status_code=202,
+            content={"status": "ignored", "reason": "no_namespace_label"},
+        )
     prompt = build_prompt(payload)
-    background_tasks.add_task(forward_to_triage_agent, prompt, settings)
+    background_tasks.add_task(forward_to_triage_agent, prompt, settings, namespace)
     logger.info(
-        "Accepted alert webhook receiver=%s alerts=%d groupKey=%s",
+        "Accepted alert webhook receiver=%s alerts=%d groupKey=%s namespace=%s",
         payload.receiver,
         len(payload.alerts),
         payload.groupKey,
+        namespace,
     )
     return JSONResponse(
         status_code=202,
@@ -77,5 +94,6 @@ async def webhook(
             "status": "accepted",
             "alerts": len(payload.alerts),
             "firing": firing_count or len(payload.alerts),
+            "namespace": namespace,
         },
     )

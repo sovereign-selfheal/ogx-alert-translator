@@ -43,5 +43,16 @@ def resolved_payload(firing_payload: dict) -> dict:
 
 
 @pytest.fixture
+def firing_payload_without_namespace(firing_payload: dict) -> dict:
+    data = {**firing_payload, "groupLabels": {"alertname": "HighErrorRate"}}
+    data["commonLabels"] = {"severity": "warning"}
+    data["alerts"] = [
+        {**alert, "labels": {k: v for k, v in alert["labels"].items() if k != "namespace"}}
+        for alert in firing_payload["alerts"]
+    ]
+    return data
+
+
+@pytest.fixture
 def firing_model(firing_payload: dict) -> AlertmanagerPayload:
     return AlertmanagerPayload.model_validate(firing_payload)
